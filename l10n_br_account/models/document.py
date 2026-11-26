@@ -6,7 +6,7 @@ from datetime import datetime, time
 
 from pytz import UTC, timezone
 
-from odoo import _, api, fields, models
+from odoo import api, fields, models
 from odoo.exceptions import UserError
 
 from odoo.addons.l10n_br_fiscal.constants.fiscal import (
@@ -205,7 +205,8 @@ class FiscalDocument(models.Model):
         for record in self:
             record.move_count = len(record.move_ids)
 
-    def unlink(self):
+    @api.ondelete(at_uninstall=False)
+    def _unlink_except_not_draft(self):
         non_draft_documents = self.filtered(
             lambda d: d.state_edoc != DOCUMENT_STATE_DRAFT
         )
@@ -216,7 +217,6 @@ class FiscalDocument(models.Model):
                     "You cannot delete a fiscal document which is not in draft state!"
                 )
             )
-        return super().unlink()
 
     @api.model
     def _sync_shadow_fields(self, vals):
@@ -371,12 +371,12 @@ class FiscalDocument(models.Model):
         )
         posted = moves.filtered(lambda move: move.state == "posted")
         if posted:
-            return _(
+            return self.env._(
                 "This document is already posted on %(invoice)s.",
                 invoice=posted[:1].display_name,
             )
         if moves:
-            return _(
+            return self.env._(
                 "This document is already linked to %(invoice)s.",
                 invoice=moves[:1].display_name,
             )
@@ -392,23 +392,25 @@ class FiscalDocument(models.Model):
         self.ensure_one()
         errors = []
         for line in self.fiscal_line_ids:
-            label = line.name or line.product_id.display_name or _("Unknown")
+            label = line.name or line.product_id.display_name or self.env._("Unknown")
             if not line.product_id:
-                errors.append(_("- %s: no product matched.") % label)
+                errors.append(self.env._("- %s: no product matched.", label))
             if not line.uom_id:
-                errors.append(_("- %s: no unit of measure.") % label)
+                errors.append(self.env._("- %s: no unit of measure.", label))
             if not line.quantity:
-                errors.append(_("- %s: no quantity.") % label)
+                errors.append(self.env._("- %s: no quantity.", label))
             if not line.price_unit and line.fiscal_amount_total:
                 # A zero unit price with a zero line total is a legitimate
                 # free line (bonificação / amostra grátis declared with
                 # vUnCom=0). Only flag the inconsistent case where amounts
                 # exist but the unit price was not resolved.
-                errors.append(_("- %s: no unit price.") % label)
+                errors.append(self.env._("- %s: no unit price.", label))
         if errors:
             raise UserError(
-                _("The document cannot be imported due to incomplete lines:\n%s")
-                % "\n".join(errors)
+                self.env._(
+                    "The document cannot be imported due to incomplete lines:\n%s",
+                    "\n".join(errors),
+                )
             )
 
     def dfe_utilization_from_bills(self):
